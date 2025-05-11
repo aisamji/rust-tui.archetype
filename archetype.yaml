@@ -1,0 +1,9 @@
+---
+description: "Rust TUI"
+authors: ["Ali Samji <aisamji@users.noreply.github.com>"]
+languages: []
+frameworks: []
+tags: []
+
+requires:
+  archetect: "2.0.4"
