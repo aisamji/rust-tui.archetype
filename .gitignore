@@ -9,3 +9,6 @@
 .classpath
 .settings/
 
+### Cargo files
+target/
+Cargo.lock

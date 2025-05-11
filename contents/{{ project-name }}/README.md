@@ -2,4 +2,4 @@
 
 Author: {{ author_full }}
 
-{{ greeting }}
+{{ description }}

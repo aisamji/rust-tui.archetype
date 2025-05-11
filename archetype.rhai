@@ -11,9 +11,8 @@ context += prompt("Project Name:", "project-name", #{
   ], 
 });
 
-context += prompt("Greeting:", "greeting", #{
-  defaults_with: "Hello, World!",
-  help: "Cliche greeting",
+context += prompt("Short description:", "description", #{
+  defaults_with: "A TUI application written in Rust.",
 });
 
 render(Directory("contents"), context)
