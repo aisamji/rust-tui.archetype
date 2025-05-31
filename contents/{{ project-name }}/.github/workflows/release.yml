@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - '*-v*'
+      - '*-v[0-9]+.[0-9]+.[0-9]+*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,7 +12,19 @@ jobs:
   build-and-test:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            binary_name: {{ project-name }}
+            binary_ext: ""
+          - os: windows-latest
+            target: windows-x86_64
+            binary_name: {{ project-name }}.exe
+            binary_ext: ".exe"
+          - os: macos-latest
+            target: macos-x86_64
+            binary_name: {{ project-name }}
+            binary_ext: ""
     
     runs-on: ${{ '{{' }} matrix.os }}
     
@@ -36,11 +48,18 @@ jobs:
     - name: Build release
       run: cargo build --release --all-features
     
+    - name: Extract version from tag
+      id: version
+      run: echo "version=${{ '{{' }} github.ref_name }}" | sed 's/.*-v//' >> $GITHUB_OUTPUT
+    
+    - name: Rename binary
+      run: cp "target/release/${{ '{{' }} matrix.binary_name }}" "{{ project-name }}-${{ '{{' }} steps.version.outputs.version }}-${{ '{{' }} matrix.target }}${{ '{{' }} matrix.binary_ext }}"
+    
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: binary-${{ '{{' }} runner.os }}
-        path: target/release/{{ project-name }}*
+        name: binary-${{ '{{' }} matrix.target }}
+        path: "{{ project-name }}-${{ '{{' }} steps.version.outputs.version }}-${{ '{{' }} matrix.target }}${{ '{{' }} matrix.binary_ext }}"
 
   create-release:
     needs: build-and-test
@@ -49,6 +68,8 @@ jobs:
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
+      with:
+        merge-multiple: true
     
     - name: Create Release
       uses: ncipollo/release-action@v1
@@ -57,8 +78,5 @@ jobs:
         name: Release ${{ '{{' }} github.ref_name }}
         draft: false
         prerelease: ${{ '{{' }} contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
-        artifacts: |
-          binary-Linux/{{ project-name }}
-          binary-Windows/{{ project-name }}.exe
-          binary-macOS/{{ project-name }}
+        artifacts: "{{ project-name }}-*"
         token: ${{ '{{' }} secrets.GITHUB_TOKEN }}
