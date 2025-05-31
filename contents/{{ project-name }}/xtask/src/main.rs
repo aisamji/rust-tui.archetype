@@ -1,11 +1,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use git2::{Repository, Signature};
+use git2::Repository;
 use semver::Version;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
-use toml_edit::{Document, Item};
+use toml_edit::DocumentMut;
 use walkdir::WalkDir;
 
 #[derive(Parser)]
@@ -80,7 +79,7 @@ fn find_workspace_packages() -> Result<HashMap<String, (String, String)>> {
             let path = entry.path();
             let content = fs::read_to_string(path)
                 .with_context(|| format!("Failed to read Cargo.toml at {}", path.display()))?;
-            let doc: Document = content.parse()
+            let doc: DocumentMut = content.parse()
                 .with_context(|| format!("Failed to parse Cargo.toml at {}", path.display()))?;
             
             if let Some(package) = doc.get("package") {
@@ -172,7 +171,7 @@ fn bump_versions(packages: &HashMap<String, (String, String)>, targets: &[String
             }
             
             update_cargo_toml(path, &version.to_string())?;
-            update_workspace_dependencies(target, &version.to_string(), &workspace_packages)?;
+            update_workspace_dependencies(target, &version.to_string(), &packages)?;
             println!("Bumped {} from {} to {}", target, current_version, version);
         } else {
             anyhow::bail!("Package '{}' not found", target);
@@ -184,11 +183,11 @@ fn bump_versions(packages: &HashMap<String, (String, String)>, targets: &[String
 fn update_cargo_toml(path: &str, new_version: &str) -> Result<()> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read Cargo.toml at {}", path))?;
-    let mut doc: Document = content.parse()
+    let mut doc: DocumentMut = content.parse()
         .with_context(|| format!("Failed to parse Cargo.toml at {}", path))?;
     
     if let Some(package) = doc.get_mut("package") {
-        if let Some(Item::Table(table)) = package.as_table_mut() {
+        if let Some(table) = package.as_table_mut() {
             table["version"] = toml_edit::value(new_version);
             fs::write(path, doc.to_string())
                 .with_context(|| format!("Failed to write Cargo.toml at {}", path))?;
@@ -201,7 +200,7 @@ fn update_cargo_toml(path: &str, new_version: &str) -> Result<()> {
 fn update_workspace_dependencies(package_name: &str, new_version: &str, workspace_packages: &HashMap<String, (String, String)>) -> Result<()> {
     for (_, (_, path)) in workspace_packages {
         if let Ok(content) = fs::read_to_string(path) {
-            if let Ok(mut doc) = content.parse::<Document>() {
+            if let Ok(mut doc) = content.parse::<DocumentMut>() {
                 let mut updated = false;
                 
                 let dependency_sections = ["dependencies", "dev-dependencies", "build-dependencies"];

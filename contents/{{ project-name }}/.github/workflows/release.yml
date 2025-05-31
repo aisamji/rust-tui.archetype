@@ -15,15 +15,19 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux-x86_64
-            binary_name: {{ project-name }}
+            binary_name: '{{ project-name }}'
             binary_ext: ""
           - os: windows-latest
             target: windows-x86_64
-            binary_name: {{ project-name }}.exe
+            binary_name: '{{ project-name }}.exe'
             binary_ext: ".exe"
-          - os: macos-latest
+          - os: macos-13
             target: macos-x86_64
-            binary_name: {{ project-name }}
+            binary_name: '{{ project-name }}'
+            binary_ext: ""
+          - os: macos-latest
+            target: macos-arm64
+            binary_name: '{{ project-name }}'
             binary_ext: ""
     
     runs-on: ${{ '{{' }} matrix.os }}
@@ -64,6 +68,9 @@ jobs:
   create-release:
     needs: build-and-test
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
     
     steps:
     - name: Download all artifacts
@@ -79,4 +86,4 @@ jobs:
         draft: false
         prerelease: ${{ '{{' }} contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
         artifacts: "{{ project-name }}-*"
-        token: ${{ '{{' }} secrets.GITHUB_TOKEN }}
+        token: ${{ '{{' }} github.token }}
