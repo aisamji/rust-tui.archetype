@@ -204,44 +204,17 @@ fn update_workspace_dependencies(package_name: &str, new_version: &str, workspac
             if let Ok(mut doc) = content.parse::<Document>() {
                 let mut updated = false;
                 
-                // Check dependencies section
-                if let Some(deps) = doc.get_mut("dependencies") {
-                    if let Some(Item::Table(deps_table)) = deps.as_table_mut() {
-                        if let Some(dep) = deps_table.get_mut(package_name) {
-                            if let Some(Item::Table(dep_table)) = dep.as_table_mut() {
-                                if dep_table.contains_key("path") {
-                                    dep_table["version"] = toml_edit::value(new_version);
-                                    updated = true;
-                                }
-                            }
-                        }
-                    }
-                }
+                let dependency_sections = ["dependencies", "dev-dependencies", "build-dependencies"];
                 
-                // Check dev-dependencies section
-                if let Some(dev_deps) = doc.get_mut("dev-dependencies") {
-                    if let Some(Item::Table(dev_deps_table)) = dev_deps.as_table_mut() {
-                        if let Some(dep) = dev_deps_table.get_mut(package_name) {
-                            if let Some(Item::Table(dep_table)) = dep.as_table_mut() {
-                                if dep_table.contains_key("path") {
-                                    dep_table["version"] = toml_edit::value(new_version);
-                                    updated = true;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Check build-dependencies section
-                if let Some(build_deps) = doc.get_mut("build-dependencies") {
-                    if let Some(Item::Table(build_deps_table)) = build_deps.as_table_mut() {
-                        if let Some(dep) = build_deps_table.get_mut(package_name) {
-                            if let Some(Item::Table(dep_table)) = dep.as_table_mut() {
-                                if dep_table.contains_key("path") {
-                                    dep_table["version"] = toml_edit::value(new_version);
-                                    updated = true;
-                                }
-                            }
+                for section in dependency_sections {
+                    if let Some(dep_table) = doc.get_mut(section)
+                        .and_then(|deps| deps.as_table_mut())
+                        .and_then(|deps_table| deps_table.get_mut(package_name))
+                        .and_then(|dep| dep.as_table_mut())
+                    {
+                        if dep_table.contains_key("path") {
+                            dep_table["version"] = toml_edit::value(new_version);
+                            updated = true;
                         }
                     }
                 }
