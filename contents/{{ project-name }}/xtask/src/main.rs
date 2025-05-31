@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use git2::{Repository, Signature};
 use semver::Version;
@@ -31,28 +32,28 @@ enum Commands {
         /// Specific packages to tag (defaults to all)
         #[arg(value_name = "PACKAGE")]
         packages: Vec<String>,
-        /// Also push the tag to remote
+        /// Don't push the tag to remote
         #[arg(long)]
-        push: bool,
+        no_push: bool,
     },
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Version { packages, bump } => {
             handle_version(packages, bump)?;
         }
-        Commands::Tag { packages, push } => {
-            handle_tag(packages, push)?;
+        Commands::Tag { packages, no_push } => {
+            handle_tag(packages, no_push)?;
         }
     }
     
     Ok(())
 }
 
-fn handle_version(packages: Vec<String>, bump: Option<String>) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_version(packages: Vec<String>, bump: Option<String>) -> Result<()> {
     let workspace_packages = find_workspace_packages()?;
     
     let target_packages = if packages.is_empty() {
@@ -70,15 +71,17 @@ fn handle_version(packages: Vec<String>, bump: Option<String>) -> Result<(), Box
     Ok(())
 }
 
-fn find_workspace_packages() -> Result<HashMap<String, (String, String)>, Box<dyn std::error::Error>> {
+fn find_workspace_packages() -> Result<HashMap<String, (String, String)>> {
     let mut packages = HashMap::new();
     
     for entry in WalkDir::new(".").follow_links(true) {
-        let entry = entry?;
+        let entry = entry.context("Failed to read directory entry")?;
         if entry.file_name() == "Cargo.toml" {
             let path = entry.path();
-            let content = fs::read_to_string(path)?;
-            let doc: Document = content.parse()?;
+            let content = fs::read_to_string(path)
+                .with_context(|| format!("Failed to read Cargo.toml at {}", path.display()))?;
+            let doc: Document = content.parse()
+                .with_context(|| format!("Failed to parse Cargo.toml at {}", path.display()))?;
             
             if let Some(package) = doc.get("package") {
                 if let (Some(name), Some(version)) = (
@@ -97,65 +100,166 @@ fn find_workspace_packages() -> Result<HashMap<String, (String, String)>, Box<dy
     Ok(packages)
 }
 
-fn show_versions(packages: &HashMap<String, (String, String)>, targets: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+fn show_versions(packages: &HashMap<String, (String, String)>, targets: &[String]) -> Result<()> {
     for target in targets {
         if let Some((version, _)) = packages.get(target) {
             println!("{}: {}", target, version);
         } else {
-            return Err(format!("Package '{}' not found", target).into());
+            anyhow::bail!("Package '{}' not found", target);
         }
     }
     Ok(())
 }
 
-fn bump_versions(packages: &HashMap<String, (String, String)>, targets: &[String], bump_level: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn bump_versions(packages: &HashMap<String, (String, String)>, targets: &[String], bump_level: &str) -> Result<()> {
     for target in targets {
         if let Some((current_version, path)) = packages.get(target) {
-            let mut version = Version::parse(current_version)?;
+            let mut version = Version::parse(current_version)
+                .with_context(|| format!("Invalid version format for {}: {}", target, current_version))?;
             
             match bump_level {
                 "major" => {
                     version.major += 1;
                     version.minor = 0;
                     version.patch = 0;
+                    version.pre = semver::Prerelease::EMPTY;
                 }
                 "minor" => {
                     version.minor += 1;
                     version.patch = 0;
+                    version.pre = semver::Prerelease::EMPTY;
                 }
                 "patch" => {
                     version.patch += 1;
+                    version.pre = semver::Prerelease::EMPTY;
+                }
+                "alpha" => {
+                    if version.pre.is_empty() {
+                        version.patch += 1;
+                        version.pre = semver::Prerelease::new("alpha.1")?;
+                    } else if version.pre.as_str().starts_with("alpha.") {
+                        let alpha_num: u64 = version.pre.as_str()[6..].parse()
+                            .with_context(|| format!("Invalid alpha version: {}", version.pre))?;
+                        version.pre = semver::Prerelease::new(&format!("alpha.{}", alpha_num + 1))?;
+                    } else {
+                        anyhow::bail!("Cannot bump to alpha from {} prerelease", version.pre);
+                    }
+                }
+                "beta" => {
+                    if version.pre.is_empty() {
+                        version.patch += 1;
+                        version.pre = semver::Prerelease::new("beta.1")?;
+                    } else if version.pre.as_str().starts_with("beta.") {
+                        let beta_num: u64 = version.pre.as_str()[5..].parse()
+                            .with_context(|| format!("Invalid beta version: {}", version.pre))?;
+                        version.pre = semver::Prerelease::new(&format!("beta.{}", beta_num + 1))?;
+                    } else if version.pre.as_str().starts_with("alpha.") {
+                        version.pre = semver::Prerelease::new("beta.1")?;
+                    } else {
+                        anyhow::bail!("Cannot bump to beta from {} prerelease", version.pre);
+                    }
+                }
+                "release" => {
+                    if !version.pre.is_empty() {
+                        version.pre = semver::Prerelease::EMPTY;
+                    } else {
+                        anyhow::bail!("Version {} is already a release version", version);
+                    }
                 }
                 _ => {
-                    return Err(format!("Invalid bump level: {}. Use major, minor, or patch", bump_level).into());
+                    anyhow::bail!("Invalid bump level: {}. Use major, minor, patch, alpha, beta, or release", bump_level);
                 }
             }
             
             update_cargo_toml(path, &version.to_string())?;
+            update_workspace_dependencies(target, &version.to_string(), &workspace_packages)?;
             println!("Bumped {} from {} to {}", target, current_version, version);
         } else {
-            return Err(format!("Package '{}' not found", target).into());
+            anyhow::bail!("Package '{}' not found", target);
         }
     }
     Ok(())
 }
 
-fn update_cargo_toml(path: &str, new_version: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let content = fs::read_to_string(path)?;
-    let mut doc: Document = content.parse()?;
+fn update_cargo_toml(path: &str, new_version: &str) -> Result<()> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read Cargo.toml at {}", path))?;
+    let mut doc: Document = content.parse()
+        .with_context(|| format!("Failed to parse Cargo.toml at {}", path))?;
     
     if let Some(package) = doc.get_mut("package") {
         if let Some(Item::Table(table)) = package.as_table_mut() {
             table["version"] = toml_edit::value(new_version);
-            fs::write(path, doc.to_string())?;
+            fs::write(path, doc.to_string())
+                .with_context(|| format!("Failed to write Cargo.toml at {}", path))?;
         }
     }
     
     Ok(())
 }
 
-fn handle_tag(packages: Vec<String>, push: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let repo = Repository::open(".")?;
+fn update_workspace_dependencies(package_name: &str, new_version: &str, workspace_packages: &HashMap<String, (String, String)>) -> Result<()> {
+    for (_, (_, path)) in workspace_packages {
+        if let Ok(content) = fs::read_to_string(path) {
+            if let Ok(mut doc) = content.parse::<Document>() {
+                let mut updated = false;
+                
+                // Check dependencies section
+                if let Some(deps) = doc.get_mut("dependencies") {
+                    if let Some(Item::Table(deps_table)) = deps.as_table_mut() {
+                        if let Some(dep) = deps_table.get_mut(package_name) {
+                            if let Some(Item::Table(dep_table)) = dep.as_table_mut() {
+                                if dep_table.contains_key("path") {
+                                    dep_table["version"] = toml_edit::value(new_version);
+                                    updated = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Check dev-dependencies section
+                if let Some(dev_deps) = doc.get_mut("dev-dependencies") {
+                    if let Some(Item::Table(dev_deps_table)) = dev_deps.as_table_mut() {
+                        if let Some(dep) = dev_deps_table.get_mut(package_name) {
+                            if let Some(Item::Table(dep_table)) = dep.as_table_mut() {
+                                if dep_table.contains_key("path") {
+                                    dep_table["version"] = toml_edit::value(new_version);
+                                    updated = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Check build-dependencies section
+                if let Some(build_deps) = doc.get_mut("build-dependencies") {
+                    if let Some(Item::Table(build_deps_table)) = build_deps.as_table_mut() {
+                        if let Some(dep) = build_deps_table.get_mut(package_name) {
+                            if let Some(Item::Table(dep_table)) = dep.as_table_mut() {
+                                if dep_table.contains_key("path") {
+                                    dep_table["version"] = toml_edit::value(new_version);
+                                    updated = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if updated {
+                    fs::write(path, doc.to_string())
+                        .with_context(|| format!("Failed to write updated dependencies to {}", path))?;
+                    println!("Updated {} dependency in {}", package_name, path);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_tag(packages: Vec<String>, no_push: bool) -> Result<()> {
+    let repo = Repository::open(".")
+        .context("Failed to open git repository")?;
     let workspace_packages = find_workspace_packages()?;
     
     let target_packages = if packages.is_empty() {
@@ -165,26 +269,32 @@ fn handle_tag(packages: Vec<String>, push: bool) -> Result<(), Box<dyn std::erro
     };
     
     // Get HEAD commit
-    let head = repo.head()?;
-    let commit = head.peel_to_commit()?;
-    let signature = repo.signature()?;
+    let head = repo.head()
+        .context("Failed to get HEAD reference")?;
+    let commit = head.peel_to_commit()
+        .context("Failed to get HEAD commit")?;
+    let signature = repo.signature()
+        .context("Failed to get git signature")?;
     
     for target in target_packages {
         if let Some((version, _)) = workspace_packages.get(&target) {
             let tag_name = format!("{}-v{}", target, version);
             let tag_message = format!("Release {} {}", target, version);
             
-            repo.tag(&tag_name, commit.as_object(), &signature, &tag_message, false)?;
+            repo.tag(&tag_name, commit.as_object(), &signature, &tag_message, false)
+                .with_context(|| format!("Failed to create tag {}", tag_name))?;
             println!("Created tag: {}", tag_name);
             
-            if push {
-                let mut remote = repo.find_remote("origin")?;
+            if !no_push {
+                let mut remote = repo.find_remote("origin")
+                    .context("Failed to find 'origin' remote")?;
                 let refspec = format!("refs/tags/{}:refs/tags/{}", tag_name, tag_name);
-                remote.push(&[&refspec], None)?;
+                remote.push(&[&refspec], None)
+                    .with_context(|| format!("Failed to push tag {} to origin", tag_name))?;
                 println!("Pushed tag {} to origin", tag_name);
             }
         } else {
-            return Err(format!("Package '{}' not found", target).into());
+            anyhow::bail!("Package '{}' not found", target);
         }
     }
     
