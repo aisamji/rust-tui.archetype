@@ -1,4 +1,0 @@
-[workspace]
-# We will handle creating the Github release externally.
-git_release_enable = false
-
