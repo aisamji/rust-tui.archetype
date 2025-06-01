@@ -15,4 +15,6 @@ context += prompt("Short description:", "description", #{
   defaults_with: "A TUI application written in Rust.",
 });
 
+context += prompt("Github owner:", "github-owner");
+
 render(Directory("contents"), context)
