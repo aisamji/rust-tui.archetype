@@ -43,12 +43,15 @@ jobs:
 
   upload-binaries:
     needs: release-plz
+    permissions:
+      contents: write
+
     strategy:
-      matrix: ${{ '{{' }} fromJSON(needs.release-plz.outputs.matrix }}
+      matrix: ${{ '{{' }} fromJSON(needs.release-plz.outputs.matrix) }}
       fail-fast: false
 
     uses: ./.github/workflows/upload-binary.yaml
     with:
-      os: ${{ matrix.os }}
-      tag: ${{ matrix.tag }}
+      os: ${{ '{{' }} matrix.os }}
+      tag: ${{ '{{' }} matrix.tag }}
 
